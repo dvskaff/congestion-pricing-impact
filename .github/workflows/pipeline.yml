@@ -1,0 +1,100 @@
+name: Analysis
+
+# Downloads any newly published TLC month and the latest MTA data, re-estimates the toll's effect and republishes the
+# site. The TLC publishes about two months behind and the MTA updates entries weekly, so a weekly run is enough.
+# The monthly aggregates are kept between runs as a release asset, so each trip file is downloaded only once.
+on:
+  schedule:
+    - cron: "37 14 * * 1" # Mondays 14:37 UTC
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # save the aggregates as a release asset and commit README results
+  pages: write
+  id-token: write
+
+concurrency:
+  group: analysis
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Test before touching real data
+        run: pytest -q
+
+      - name: Restore the monthly aggregates from the last run
+        run: |
+          mkdir -p data
+          if gh release download state --pattern "state.tar.zst" --dir data; then
+            tar -I zstd -xf data/state.tar.zst -C data && rm data/state.tar.zst
+            du -sh data/*
+          else
+            echo "No saved aggregates yet: this run downloads every month since 2023 (about 25 GB; takes longer)."
+          fi
+
+      # DuckDB compiled to WebAssembly, so visitors can query the tables in the browser (sql.html).
+      - name: Get the browser SQL runtime (DuckDB-WASM, from npm)
+        run: bash scripts/fetch_web_runtime.sh
+
+      - name: Download new months, aggregate, analyze, build the site
+        run: python -m congestion.pipeline
+        env:
+          PYTHONPATH: src
+
+      # Saved even if the analysis fails, so the downloads already done are never repeated.
+      - name: Save the aggregates for the next run
+        if: always()
+        run: |
+          if [ -d data/agg ]; then
+            tar -I "zstd -T0 -10" -cf state.tar.zst -C data agg zones
+            ls -lh state.tar.zst
+            gh release view state > /dev/null 2>&1 || gh release create state --latest=false \
+              --title "Monthly aggregates (updated weekly)" \
+              --notes "TLC trip records condensed to zone-to-zone monthly totals (Parquet), plus the taxi zones."
+            gh release upload state state.tar.zst --clobber
+          fi
+
+      - name: Commit README results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if ! git diff --staged --quiet; then
+            git commit -m "Results: data through $(python -c 'import json;print(json.load(open("site/results.json"))["data_through"][:7])')"
+            git pull --rebase -X theirs
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
