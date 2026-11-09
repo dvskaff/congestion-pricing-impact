@@ -28,25 +28,29 @@ taken out?** This project answers that with public data only:
 Rewritten automatically after every run.
 
 <!-- RESULTS:START -->
-_TLC trip records Jan 2023 to Sep 2026 · 1,028M taxi and ride-hail trips · 38 taxi zones inside the toll zone (per-trip congestion fees in the trip records) · last run 2026-11-09 00:34 UTC_
+_TLC trip records Jan 2023 to Sep 2026 · 1,028M taxi and ride-hail trips · 38 taxi zones inside the toll zone (per-trip congestion fees in the trip records) · last run 2026-11-09 00:49 UTC_
 
-| Estimate (difference-in-differences, 95% CI) | Effect of the toll |
+| Speed of taxi and app-ride trips inside the zone, weekday toll hours, vs. Manhattan above 60th St | Effect (95% CI) |
 |---|---|
-| **Speed of trips inside the zone**, weekday toll hours, vs. Manhattan above 60th St | **+0.3% (-0.4% to +1.0%)** |
-| Allowing different seasonal patterns inside the zone | -0.1% (-0.8% to +0.7%) |
-| Weighted by number of trips | +0.4% (-0.4% to +1.1%) |
-| Control: Brooklyn, Queens and the Bronx | +0.6% (+0.0% to +1.1%) |
-| Placebo: a fake toll in January 2024 (should be about zero) | -2.4% (-2.8% to -2.0%) |
-| Weekend toll hours | +2.2% (+1.4% to +3.0%) |
-| Overnight (lower toll) | +0.2% (-0.4% to +0.8%) |
-| Yellow taxis only | -2.0% (-3.7% to -0.2%) |
-| Uber, Lyft and other app rides only | +0.7% (+0.0% to +1.4%) |
-| Taxi and ride-hail pickups inside the zone | -5.7% (-7.7% to -3.7%) |
-| MTA bus speeds, segments inside vs. outside the zone | +2.6% (+1.8% to +3.5%) |
+| **First toll year: 2025 vs. 2024** | **+2.4% (+1.8% to +3.0%)** |
+| Second toll year: 2026 vs. 2024 | +0.3% (-0.6% to +1.2%) |
+| **Trend-adjusted: if the pre-toll drift had continued** | **+10.0% (+9.1% to +10.9%)** |
+| Placebo, before any toll: 2023 vs. 2024 (should be about zero) | +2.4% (+2.0% to +2.9%) |
+| Pooled: all toll months vs. all earlier months (assumes parallel trends) | +0.3% (-0.4% to +1.0%) |
+| Robustness: Control: Brooklyn, Queens and the Bronx, 2025 vs. 2024 | +2.0% (+1.6% to +2.4%) |
+| Robustness: Weighted by number of trips, 2025 vs. 2024 | +2.4% (+1.8% to +3.1%) |
+| Robustness: Weekend toll hours, 2025 vs. 2024 | +4.0% (+3.3% to +4.6%) |
+| Robustness: Overnight (lower toll), 2025 vs. 2024 | +1.9% (+1.4% to +2.5%) |
+| Robustness: Yellow taxis only, 2025 vs. 2024 | +0.4% (-1.0% to +1.8%) |
+| Robustness: Uber, Lyft and other app rides only, 2025 vs. 2024 | +2.8% (+2.2% to +3.4%) |
+| Taxi and app-ride pickups: first toll year: 2025 vs. 2024 | -1.9% (-3.0% to -0.7%) |
+| Taxi and app-ride pickups: second toll year: 2026 vs. 2024 | -7.0% (-9.5% to -4.5%) |
+| MTA bus speeds inside vs. outside the zone: First toll year: 2025 vs. 2024 | +2.9% (+2.2% to +3.6%) |
+| MTA bus speeds inside vs. outside the zone: Trend-adjusted: if the pre-toll drift had continued | +5.9% (+5.2% to +6.7%) |
 
-**Parallel trends:** before the toll, inside-zone speeds drifted -4.38% a year relative to the control zones (p = 0.00).
+**Before the toll,** inside-zone speeds drifted -4.4% a year relative to the control zones (p < 0.001), so the year-over-year and trend-adjusted estimates bracket the toll's effect; see the dashboard for the month-by-month picture.
 
-**Trips, toll months vs. a year earlier:** within the zone -3.0% · into the zone -0.9% · out of the zone -0.3% · outside the zone +8.2%
+**Trips, latest 12 toll months vs. a year earlier:** within the zone -3.0% · into the zone -0.9% · out of the zone -0.3% · outside the zone +8.2%
 
 **Vehicles entering the zone (MTA):** 482,249 per weekday in 2026, -4.0% vs. the same days of 2025 (Jan 5 to Oct 31).
 <!-- RESULTS:END -->
