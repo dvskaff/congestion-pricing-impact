@@ -28,7 +28,7 @@ taken out?** This project answers that with public data only:
 Rewritten automatically after every run.
 
 <!-- RESULTS:START -->
-_TLC trip records Jan 2023 to Sep 2026 · 1,028M taxi and ride-hail trips · 38 taxi zones inside the toll zone (per-trip congestion fees in the trip records) · last run 2026-11-09 00:58 UTC_
+_TLC trip records Jan 2023 to Sep 2026 · 1,028M taxi and ride-hail trips · 38 taxi zones inside the toll zone (per-trip congestion fees in the trip records) · last run 2026-11-09 23:33 UTC_
 
 **Speed of taxi and app-ride trips inside the zone**, weekday toll hours, vs. Manhattan above 60th St:
 
