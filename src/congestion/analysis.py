@@ -113,84 +113,142 @@ def _prep(panel, outcome, control, start=None, end=None, post=POLICY_MONTH):
     return d
 
 
-def did(panel, outcome="mph", control=UPPER, start=None, end=None, post=POLICY_MONTH, seasonal=False,
-        weight=None, label="") -> dict:  # fmt: skip
-    d = _prep(panel, outcome, control, start, end, post)
+BASE_YEAR = pd.Timestamp(POLICY_MONTH).year - 1  # the last full year before the toll
+
+
+def _fit(d: pd.DataFrame, terms: list[str], weight: str | None = None):
+    f = "y ~ " + " + ".join(terms) + " + C(unit) + C(m)"
+    model = smf.wls(f, d, weights=d[weight]) if weight else smf.ols(f, d)
+    return model.fit(cov_type="cluster", cov_kwds={"groups": d["cluster"]})
+
+
+def _est(r, name: str, label: str, d: pd.DataFrame, **extra) -> dict:
+    b, se = float(r.params[name]), float(r.bse[name])
+    return {"label": label, "ok": True, "coef": b, "se": se, "p": float(r.pvalues[name]),
+            "effect": float(np.exp(b) - 1), "lo": float(np.exp(b - 1.96 * se) - 1), "hi": float(np.exp(b + 1.96 * se) - 1),
+            "zones_inside": int(d.loc[d.treated == 1, "unit"].nunique()),
+            "zones_control": int(d.loc[d.treated == 0, "unit"].nunique()), "obs": int(len(d)), **extra}  # fmt: skip
+
+
+def frame(panel, outcome="mph", control=UPPER) -> pd.DataFrame:
+    d = _prep(panel, outcome, control)
+    d["unit"] = d["cluster"] = d["zone"]
+    return d
+
+
+def yearly(d: pd.DataFrame, weight: str | None = None) -> dict[int, dict]:
+    """Inside-vs-control gap in each calendar year relative to the last pre-toll year (2024), with zone and month
+    effects. The year before (2023) is a built-in placebo: no toll yet, so it should be about zero."""
+    d = d.copy()
+    years = [y for y in sorted(d["month"].dt.year.unique()) if y != BASE_YEAR]
+    if BASE_YEAR not in set(d["month"].dt.year) or d["treated"].nunique() < 2 or not years:
+        return {}
+    for y in years:
+        d[f"t{y}"] = d["treated"] * (d["month"].dt.year == y)
+    r = _fit(d, [f"t{y}" for y in years], weight)
+    return {int(y): _est(r, f"t{y}", f"{y} vs. {BASE_YEAR}", d, year=int(y)) for y in years}
+
+
+def trend_adjusted(d: pd.DataFrame, label: str) -> dict:
+    """Difference-in-differences that lets the inside zones follow their own linear trend: the toll's effect is the
+    average jump from that trend after January 2025. Right if the pre-toll drift would have continued."""
+    d = d.copy()
+    d["tt"] = d["treated"] * (d["month"] - pd.Timestamp(POLICY_MONTH)).dt.days / 365.25
+    r = _fit(d, ["did", "tt"])
+    return _est(r, "did", label, d, trend_per_year=float(np.exp(r.params["tt"]) - 1))
+
+
+def pooled(d: pd.DataFrame, label: str) -> dict:
+    """The textbook version: all toll months vs. all earlier months. Valid only if trends were parallel."""
+    return _est(_fit(d, ["did"]), "did", label, d)
+
+
+def did(panel, outcome="mph", control=UPPER, label="") -> dict:
+    d = frame(panel, outcome, control)
     if d["treated"].nunique() < 2 or d["post"].nunique() < 2:
         return {"label": label, "ok": False}
-    f = "y ~ did + C(zone) + C(m)"
-    if seasonal:  # the zone's own seasonal pattern: treated x calendar month (January is the base)
-        for c in range(2, 13):
-            d[f"tc{c}"] = d["treated"] * (d["cal"] == c)
-        f += "".join(f" + tc{c}" for c in range(2, 13))
-    model = smf.wls(f, d, weights=d[weight]) if weight else smf.ols(f, d)
-    r = model.fit(cov_type="cluster", cov_kwds={"groups": d["zone"]})
-    b, se = float(r.params["did"]), float(r.bse["did"])
-    return {"label": label, "ok": True, "coef": b, "se": se, "p": float(r.pvalues["did"]),
-            "effect": float(np.exp(b) - 1), "lo": float(np.exp(b - 1.96 * se) - 1), "hi": float(np.exp(b + 1.96 * se) - 1),
-            "zones_inside": int(d.loc[d.treated == 1, "zone"].nunique()),
-            "zones_control": int(d.loc[d.treated == 0, "zone"].nunique()), "obs": int(len(d)),
-            "control": control, "outcome": outcome, "start": str(d["month"].min().date()),
-            "end": str(d["month"].max().date())}  # fmt: skip
+    return pooled(d, label)
 
 
-def event_study(panel, outcome="mph", control=UPPER, ref=None) -> tuple[pd.DataFrame, dict]:
-    """One coefficient per month (inside vs control, relative to the month before the toll), and the pre-toll trend
-    test."""
-    d = _prep(panel, outcome, control)
-    ref = pd.Timestamp(ref) if ref else pd.Timestamp(POLICY_MONTH) - pd.offsets.MonthBegin(1)
-    months = sorted(d["month"].unique())
+def event_study(panel, outcome="mph", control=UPPER) -> tuple[pd.DataFrame, dict]:
+    """One coefficient per month: the inside-vs-control gap relative to its average in 2024 (all twelve months of the
+    last pre-toll year form the reference, so one unusual month can't tilt the picture). Also returns the pre-toll
+    trend test."""
+    d = frame(panel, outcome, control)
     names = []
-    for mo in months:
-        if pd.Timestamp(mo) == ref:
+    for mo in sorted(d["month"].unique()):
+        if pd.Timestamp(mo).year == BASE_YEAR:
             continue
         n = "ev_" + pd.Timestamp(mo).strftime("%Y_%m")
         d[n] = ((d["month"] == mo) & (d["treated"] == 1)).astype(int)
         names.append(n)
-    r = smf.ols("y ~ " + " + ".join(names) + " + C(zone) + C(m)", d).fit(
-        cov_type="cluster", cov_kwds={"groups": d["zone"]}
-    )
+    r = _fit(d, names)
     rows = []
     for n in names:
-        mo = pd.Timestamp(n[3:].replace("_", "-") + "-01")
         b, se = r.params[n], r.bse[n]
-        rows.append({"month": mo, "coef": b, "effect": np.exp(b) - 1, "lo": np.exp(b - 1.96 * se) - 1,
-                     "hi": np.exp(b + 1.96 * se) - 1})  # fmt: skip
-    rows.append({"month": ref, "coef": 0.0, "effect": 0.0, "lo": 0.0, "hi": 0.0})
+        rows.append({"month": pd.Timestamp(n[3:].replace("_", "-") + "-01"), "coef": b, "effect": np.exp(b) - 1,
+                     "lo": np.exp(b - 1.96 * se) - 1, "hi": np.exp(b + 1.96 * se) - 1})  # fmt: skip
+    for mo in sorted(d.loc[d["month"].dt.year == BASE_YEAR, "month"].unique()):
+        rows.append({"month": pd.Timestamp(mo), "coef": 0.0, "effect": 0.0, "lo": np.nan, "hi": np.nan})
     es = pd.DataFrame(rows).sort_values("month").reset_index(drop=True)
     return es, pre_trend(d)
 
 
 def pre_trend(d: pd.DataFrame) -> dict:
-    """Before the toll, did the inside zones already drift away from the control zones? Regress the outcome on zone and
-    month effects plus a separate linear trend for the inside zones, using pre-toll months only. A slope near zero
-    supports the parallel-trends assumption. (One slope, rather than a joint test of many monthly coefficients,
-    stays reliable with a few dozen clustered zones.)"""
+    """Before the toll, did the inside zones already drift away from the control zones? A separate linear trend for
+    the inside zones, fitted on pre-toll months only (one slope stays reliable with a few dozen clustered zones,
+    unlike a joint test of many monthly coefficients)."""
     pre = d[d["post"] == 0].copy()
     if pre["treated"].nunique() < 2 or pre["month"].nunique() < 6:
         return {"slope_per_year": np.nan, "p": np.nan}
-    pre["trend"] = pre["treated"] * (pre["month"] - pre["month"].min()).dt.days / 365.25
-    r = smf.ols("y ~ trend + C(zone) + C(m)", pre).fit(cov_type="cluster", cov_kwds={"groups": pre["zone"]})
-    return {"slope_per_year": float(np.exp(r.params["trend"]) - 1), "p": float(r.pvalues["trend"]),
+    pre["tt"] = pre["treated"] * (pre["month"] - pre["month"].min()).dt.days / 365.25
+    r = _fit(pre, ["tt"])
+    return {"slope_per_year": float(np.exp(r.params["tt"]) - 1), "p": float(r.pvalues["tt"]),
             "months": int(pre["month"].nunique())}  # fmt: skip
 
 
-def speed_results(panels: dict, months: list[pd.Timestamp]) -> list[dict]:
-    """The main estimate and its robustness checks."""
-    main = panels["all"]
-    out = [
-        did(main, label="Main: inside vs. Manhattan above 60th St (weekday toll hours)"),
-        did(main, seasonal=True, label="Allowing different seasonal patterns inside the zone"),
-        did(main, weight="speed_trips", label="Weighted by number of trips"),
-        did(main, control=OUTER, label="Control: Brooklyn, Queens and the Bronx"),
-        did(main, start="2023-01-01", end="2024-12-01", post="2024-01-01",
-            label="Placebo: a fake toll in January 2024 (should be about zero)"),
-    ]  # fmt: skip
-    for key, label in (("weekend_peak", "Weekend toll hours"), ("overnight", "Overnight (lower toll)"),
-                       ("yellow", "Yellow taxis only"), ("fhvhv", "Uber, Lyft and other app rides only")):  # fmt: skip
-        if key in panels and not panels[key].empty:
-            out.append(did(panels[key], label=label))
-    return [r for r in out if r.get("ok")]
+def effects(d: pd.DataFrame, what: str = "") -> dict:
+    """The estimates reported for one outcome: each year vs. 2024, trend-adjusted, and pooled."""
+    yr = yearly(d)
+    first = int(pd.Timestamp(POLICY_MONTH).year)
+    out = {"yearly": yr,
+           "trend": trend_adjusted(d, f"{what}Trend-adjusted: if the pre-toll drift had continued"),
+           "pooled": pooled(d, f"{what}Pooled: all toll months vs. all earlier months (assumes parallel trends)")}  # fmt: skip
+    for key, y, text in (("first", first, "First toll year"), ("second", first + 1, "Second toll year"),
+                         ("placebo", BASE_YEAR - 1, "Placebo, before any toll")):  # fmt: skip
+        if y in yr:
+            suffix = " (should be about zero)" if key == "placebo" else ""
+            out[key] = {**yr[y], "label": f"{what}{text}: {y} vs. {BASE_YEAR}{suffix}"}
+    return out
+
+
+def speed_results(panels: dict) -> dict:
+    """Speeds: the main estimates and robustness checks (each robustness row is the first toll year vs. 2024)."""
+    main = effects(frame(panels["all"]))
+    first = int(pd.Timestamp(POLICY_MONTH).year)
+    robust = []
+    checks = [("all", OUTER, None, "Control: Brooklyn, Queens and the Bronx"),
+              ("all", UPPER, "speed_trips", "Weighted by number of trips"),
+              ("weekend_peak", UPPER, None, "Weekend toll hours"), ("overnight", UPPER, None, "Overnight (lower toll)"),
+              ("yellow", UPPER, None, "Yellow taxis only"), ("fhvhv", UPPER, None, "Uber, Lyft and other app rides only")]  # fmt: skip
+    for key, control, weight, label in checks:
+        p = panels.get(key)
+        if p is None or p.empty:
+            continue
+        d = frame(p, control=control)
+        if d["treated"].nunique() < 2:
+            continue
+        yr = yearly(d, weight=weight).get(first)
+        if yr:
+            robust.append({**yr, "label": f"{label}, {first} vs. {BASE_YEAR}"})
+    main["robust"] = robust
+    return main
+
+
+def ordered(res: dict) -> list[dict]:
+    """Estimates in display order."""
+    rows = [res.get(k) for k in ("first", "second", "trend", "placebo", "pooled")]
+    return [r for r in rows if r] + res.get("robust", [])
 
 
 # --------------------------------------------------------------------------- vehicle entries (MTA)
@@ -236,27 +294,28 @@ def crz_summary(crz: dict) -> dict:
 
 # --------------------------------------------------------------------------- bus speeds (MTA)
 def bus_did(bus: pd.DataFrame) -> dict | None:
+    """The same design on MTA bus speeds: route segments inside the zone vs. outside it."""
     from .mta import relation_role
 
     b = bus.copy()
     b["role"] = b["relation"].map(relation_role)
     b = b.dropna(subset=["role"])
-    if b["role"].nunique() < 2 or b["month"].min() >= pd.Timestamp(POLICY_MONTH):
+    if b["role"].nunique() < 2 or b["month"].dt.year.min() > BASE_YEAR:
         return None
     b["unit"] = b["route"].astype(str) + " | " + b["relation"].astype(str)
+    b["cluster"] = b["route"].astype(str)
     b = b[b["speed"] > 0]
     cover = b.groupby("unit")["month"].nunique() / b["month"].nunique()
-    b = b[b["unit"].isin(cover[cover >= 0.8].index)]
+    b = b[b["unit"].isin(cover[cover >= 0.8].index)].copy()
     b["y"], b["treated"] = np.log(b["speed"]), (b["role"] == "treated").astype(int)
-    b["did"] = b["treated"] * (b["month"] >= pd.Timestamp(POLICY_MONTH)).astype(int)
+    b["post"] = (b["month"] >= pd.Timestamp(POLICY_MONTH)).astype(int)
+    b["did"] = b["treated"] * b["post"]
     b["m"] = b["month"].dt.strftime("%Y_%m")
-    r = smf.ols("y ~ did + C(unit) + C(m)", b).fit(cov_type="cluster", cov_kwds={"groups": b["route"].astype(str)})
-    beta, se = float(r.params["did"]), float(r.bse["did"])
-    series = (b.groupby(["month", "role"])["speed"].mean().unstack()).reset_index()
-    return {"effect": float(np.exp(beta) - 1), "lo": float(np.exp(beta - 1.96 * se) - 1),
-            "hi": float(np.exp(beta + 1.96 * se) - 1), "p": float(r.pvalues["did"]), "units": int(b["unit"].nunique()),
-            "routes": int(b["route"].nunique()), "relations": sorted(map(str, bus["relation"].unique())),
-            "series": series}  # fmt: skip
+    out = effects(b, "Buses: ")
+    out["series"] = b.groupby(["month", "role"])["speed"].mean().unstack().reset_index()
+    out["routes"], out["units"] = int(b["route"].nunique()), int(b["unit"].nunique())
+    out["relations"] = sorted(map(str, bus["relation"].unique()))
+    return out
 
 
 # --------------------------------------------------------------------------- per-zone changes (map)

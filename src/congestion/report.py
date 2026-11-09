@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from plotly.offline import get_plotlyjs_version
 
 from . import zones as Z
-from .analysis import INSIDE, OUTER, RELATIONS, SERVICE_NAMES, UPPER, yoy
+from .analysis import BASE_YEAR, INSIDE, OUTER, RELATIONS, SERVICE_NAMES, UPPER, ordered, yoy
 from .config import POLICY_MONTH, Config
 from .report_base import (
     AQUA,
@@ -42,6 +42,10 @@ main a { color:#2a78d6; }
 #zone-detail { min-height:330px; }
 .zone-pick { font-size:13px; color:#52514e; margin:4px 0 0; }
 """
+
+
+def _pv(p: float) -> str:
+    return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
 
 
 def _pp(v, d=1) -> str:
@@ -289,9 +293,9 @@ def build_site(cfg: Config, res: dict) -> dict:
     built_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     months = res["months"]
     first, last = months[0], months[-1]
-    results, main = res["results"], res["results"][0]
-    placebo = next((r for r in results if r["label"].startswith("Placebo")), None)
-    trips_did, bus, crz = res["trips_did"], res["bus"], res["crz"]
+    results, sp = res["results"], res["speed"]
+    main, second, trend, placebo = sp.get("first"), sp.get("second"), sp.get("trend"), sp.get("placebo")
+    trips, bus, crz = res["trips"], res["bus"], res["crz"]
     pt = res["pretrend_p"]
     rel_yoy = res["relation_yoy"]
     zt = res["zones"]
@@ -300,33 +304,53 @@ def build_site(cfg: Config, res: dict) -> dict:
     rides = int(load["rows_kept"].sum()) if len(load) else 0
     banner = "<div class='synthetic'>SYNTHETIC TEST DATA: generated for automated tests; these numbers are not real</div>" if cfg.fixture else ""  # fmt: skip
 
+    def card(label, r, note):
+        return _card(
+            label, _pp(r["effect"]) if r else "–", f"{note} · 95% CI {_pp(r['lo'])} to {_pp(r['hi'])}" if r else note
+        )
+
     cards = [
-        _card("Traffic speed inside the zone", _pp(main["effect"]),
-              f"vs. Manhattan above 60th St, weekday toll hours · 95% CI {_pp(main['lo'])} to {_pp(main['hi'])}"),
-        _card("Taxi and ride-hail pickups in the zone", _pp(trips_did.get("effect")),
-              f"vs. Manhattan above 60th St · 95% CI {_pp(trips_did.get('lo'))} to {_pp(trips_did.get('hi'))}"),
+        card(f"Speed inside the zone, {main['year']} vs. {BASE_YEAR}" if main else "Speed inside the zone", main,
+             "vs. Manhattan above 60th St, weekday toll hours"),
+        card("Trend-adjusted speed effect", trend, "if inside-zone speeds had kept drifting as before the toll"),
     ]  # fmt: skip
-    if bus:
-        cards.append(_card("Bus speeds inside the zone", _pp(bus["effect"]),
-                           f"vs. bus segments outside it · 95% CI {_pp(bus['lo'])} to {_pp(bus['hi'])}"))  # fmt: skip
+    if second:
+        cards.append(card(f"Speed inside the zone, {second['year']} vs. {BASE_YEAR}", second, "second toll year"))
+    cards.append(card(f"Pickups in the zone, {main['year'] if main else ''} vs. {BASE_YEAR}", trips.get("first"),
+                      "taxis and app rides, vs. Manhattan above 60th St"))  # fmt: skip
+    if bus and bus.get("first"):
+        cards.append(card(f"Bus speeds inside the zone, {bus['first']['year']} vs. {BASE_YEAR}", bus["first"],
+                          "vs. bus segments outside it"))  # fmt: skip
     if crz and crz.get("yoy"):
         y = crz["yoy"]
         cards.append(_card(f"Vehicle entries, {y['year']} vs. {y['prior']}", _pp(y["change"]),
                            f"Jan 5 to {y['through']} · {_int(y['per_weekday'])} per weekday"))  # fmt: skip
     elif crz:
         cards.append(_card("Vehicles entering per weekday", _int(crz["per_weekday"]), f"since {crz['first_day']}"))
-    cards.append(_card("Placebo test (fake toll, Jan 2024)", _pp(placebo["effect"]) if placebo else "–",
-                       "should be about zero if the method is sound"))  # fmt: skip
     cards.append(_card("Rides analyzed", f"{rides / 1e6:,.0f}M" if rides >= 1e6 else _int(rides),
                        f"TLC trip records, {first:%b %Y} to {last:%b %Y}"))  # fmt: skip
 
-    did_rows = [[html.escape(r["label"]), _ci(r), f"{r['p']:.3f}" if r["p"] >= 0.001 else "< 0.001",
-                 f"{r['zones_inside']} / {r['zones_control']}", _int(r["obs"])] for r in results]  # fmt: skip
-    did_rows.append([html.escape(trips_did["label"]), _ci(trips_did), f"{trips_did['p']:.3f}" if trips_did["p"] >= 0.001 else "< 0.001",
-                     f"{trips_did['zones_inside']} / {trips_did['zones_control']}", _int(trips_did["obs"])])  # fmt: skip
-    ptxt = (f"Before the toll, the inside zones' speeds drifted {_pp(pt['slope_per_year'], 2)} a year relative to the "
-            f"control zones (p = {pt['p']:.2f}), {'consistent with' if pt['p'] >= 0.05 else 'a warning sign for'} "
-            "the parallel-trends assumption.") if pt and not pd.isna(pt.get("p")) else ""  # fmt: skip
+    def prow(r):
+        return [html.escape(r["label"]), _ci(r), f"{r['p']:.3f}" if r["p"] >= 0.001 else "< 0.001",
+                f"{r['zones_inside']} / {r['zones_control']}", _int(r["obs"])]  # fmt: skip
+
+    did_rows = [prow(r) for r in results] + [prow(r) for r in ordered(trips)]
+    ptxt = (f"Before the toll, inside-zone speeds were already drifting {_pp(pt['slope_per_year'], 1)} a year relative "
+            f"to the control zones ({_pv(pt['p'])}){'.' if pt['p'] >= 0.05 else ', so the two areas were not moving in parallel.'}"
+            if pt and not pd.isna(pt.get("p")) else "")  # fmt: skip
+    if main and trend:
+        diverged = pt and not pd.isna(pt.get("p")) and pt["p"] < 0.05
+        verdict = (f"Relative to Manhattan above 60th Street, trips inside the zone were <b>{_pp(main['effect'])}</b> faster "
+                   f"in {main['year']} than in {BASE_YEAR} (95% CI {_pp(main['lo'])} to {_pp(main['hi'])})"
+                   + (f" and {_pp(second['effect'])} in {second['year']}" if second else "") + ". " + ptxt + " "
+                   + (f"In {placebo['year']}, before any toll, the gap was already {_pp(placebo['effect'])} vs. {BASE_YEAR}. "
+                      if placebo else "")
+                   + (f"If that drift had continued, the toll's effect is <b>{_pp(trend['effect'])}</b> (95% CI "
+                      f"{_pp(trend['lo'])} to {_pp(trend['hi'])}). The year-over-year figure assumes the drift stopped in "
+                      f"{BASE_YEAR}; the trend-adjusted one assumes it would have continued; the truth is probably between."
+                      if diverged else f"Allowing for any remaining drift gives {_pp(trend['effect'])}."))  # fmt: skip
+    else:
+        verdict = "Not enough data before and after the toll to estimate its effect."
 
     rel = res["relations"]
     rel_rows = []
@@ -364,11 +388,14 @@ from before the toll, so this shows how traffic has evolved since, not the toll'
     bus_html = (
         "<p class='muted'>The MTA bus-speed dataset could not be read on this run, or had no pre-toll months.</p>"
     )
-    if bus:
-        bus_html = f"""<p>A second, independent source: MTA bus speeds on segments inside vs. outside the zone
-({bus["routes"]} routes, {bus["units"]} route segments). The same difference-in-differences gives
-<b>{_pp(bus["effect"])}</b> (95% CI {_pp(bus["lo"])} to {_pp(bus["hi"])}) for buses inside the zone.</p>
-{_div(fig_bus(bus["series"]))}"""
+    if bus and bus.get("first"):
+        b1, bt = bus["first"], bus.get("trend")
+        bus_html = f"""<p>A second, independent source: MTA bus speeds on route segments inside vs. outside the zone
+({bus["routes"]} routes, {bus["units"]} route segments). The same design gives <b>{_pp(b1["effect"])}</b> for buses
+inside the zone in {b1["year"]} vs. {BASE_YEAR} (95% CI {_pp(b1["lo"])} to {_pp(b1["hi"])})
+{f"and {_pp(bt['effect'])} trend-adjusted" if bt else ""}.</p>
+{_div(fig_bus(bus["series"]))}
+{_table(["Specification", "Effect", "p-value", "Segments inside / outside", "Segment-months"], [prow(r) for r in ordered(bus)])}"""
     off = res.get("taxi_official")
     official_html = (_div(fig_official(off, res["speeds"]["weekday_peak"])) if off is not None and len(off) else
                      "<p class='muted'>The MTA's taxi speed estimates could not be read on this run.</p>")  # fmt: skip
@@ -414,11 +441,13 @@ from before the toll, so this shows how traffic has evolved since, not the toll'
 inside one area gives a monthly speed for every taxi zone. Speeds inside the toll zone are compared with zones in
 Manhattan above 60th Street, which face the same weather, seasons and citywide trends but no toll
 (difference-in-differences with zone and month fixed effects, standard errors clustered by zone).</p>
-<div class="grid2">{_div(fig_speeds(res["speeds"]["weekday_peak"]))}{_div(fig_event(res["event_study"], "Inside vs. control, month by month (relative to Dec 2024)", "difference in speed"))}</div>
-<p class="callout"><b>Result:</b> during weekday toll hours, trips inside the zone became <b>{_pp(main["effect"])}</b>
-faster than they would have been without the toll (95% CI {_pp(main["lo"])} to {_pp(main["hi"])}), measured against
-Manhattan above 60th Street. {ptxt} A fake toll placed in January 2024 gives {_pp(placebo["effect"]) if placebo else "–"},
-as it should if the method isn't picking up something else.</p>
+<div class="grid2">{_div(fig_speeds(res["speeds"]["weekday_peak"]))}{_div(fig_event(res["event_study"], f"Inside vs. control, month by month (relative to the {BASE_YEAR} average)", "difference in speed"))}</div>
+<p class="callout"><b>Result:</b> {verdict}</p>
+<p class="muted">For comparison, studies using Google Maps traffic data and other U.S. cities as the comparison report
+larger gains inside the zone and faster roads leading into it as well (for example
+<a href="https://www.nber.org/papers/w33584">Cook et al., NBER working paper 33584</a>). If the control areas here
+sped up because of the toll, every estimate on this page understates its effect. Taxi and app-ride speeds are
+door-to-door averages, including stops at the curb.</p>
 {_div(fig_forest(results))}
 {_table(["Specification", "Effect", "p-value", "Zones inside / control", "Zone-months"], did_rows)}
 <p class="muted">Raw changes, toll months vs. the same months a year earlier: inside the zone {_pp(res["raw_speed_yoy"].get(INSIDE))},
@@ -463,8 +492,9 @@ bus speeds and the MTA's own taxi speed estimates.</li>
 total hours of trips that start in it and end in the same area. Toll periods follow the toll: weekdays 5 a.m. to
 9 p.m., weekends 9 a.m. to 9 p.m., overnight otherwise.</li>
 <li><b>Causal design:</b> difference-in-differences with zone and month fixed effects and standard errors clustered
-by zone; an event study by month; a pre-toll trend test; a placebo toll a year early; an alternative control group;
-a version that lets the zone have its own seasonal pattern; and separate estimates by time of day and service.</li>
+by zone. Each year is compared with {BASE_YEAR}, the last year before the toll ({BASE_YEAR - 1} vs. {BASE_YEAR} doubles
+as a placebo); a trend-adjusted version lets the inside zones keep their own pre-toll trend; an event study shows
+every month; robustness checks use another control group, trip weights, other times of day and each service.</li>
 <li><b>{zone_def}</b></li>
 <li><b>Limits:</b> taxi and ride-hail trips are a sample of traffic, not all of it; speeds are door-to-door averages
 including stops; the control areas could be affected indirectly (for example, traffic diverting around the zone),
@@ -484,8 +514,10 @@ which would bias the estimate; January 2025 includes four days before the toll.<
     summary = {
         "data_from": str(first.date()), "data_through": str(last.date()), "months": len(months), "rides": rides,
         "zones_inside": n_inside, "zone_definition": info["used"], "zone_agreement": agree,
-        "speed_effect": main, "robustness": results[1:], "pretrend": pt, "pickups_effect": trips_did,
-        "bus_effect": {k: v for k, v in bus.items() if k != "series"} if bus else None,
+        "speed": {k: sp.get(k) for k in ("first", "second", "trend", "placebo", "pooled")},
+        "robustness": sp.get("robust", []), "pretrend": pt,
+        "pickups": {k: trips.get(k) for k in ("first", "second", "trend")},
+        "bus": {k: bus.get(k) for k in ("first", "second", "trend")} if bus else None,
         "entries": crz.get("yoy") if crz else None, "entries_per_weekday": crz.get("per_weekday") if crz else None,
         "raw_speed_yoy": res["raw_speed_yoy"], "relation_yoy": rel_yoy, "mta": notes, "synthetic": cfg.fixture,
         "built_at": built_at, "files": files,

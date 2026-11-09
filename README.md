@@ -16,8 +16,9 @@ taken out?** This project answers that with public data only:
 * **Every taxi and ride-hail trip since 2023** (NYC TLC trip records: yellow and green taxis, Uber, Lyft and other
   app rides), condensed with DuckDB into zone-to-zone monthly speeds and trip counts.
 * **A causal design:** difference-in-differences comparing taxi zones inside the toll zone with zones in Manhattan
-  above 60th Street, with zone and month fixed effects and standard errors clustered by zone, an event study month by
-  month, a pre-toll trend test, a placebo toll a year early, and alternative controls and specifications.
+  above 60th Street, with zone and month fixed effects and standard errors clustered by zone: the effect in each toll
+  year vs. 2024, a month-by-month event study, a pre-toll trend test with a placebo year, a trend-adjusted estimate for
+  when the two areas were not moving in parallel, and alternative controls and specifications.
 * **Independent checks:** MTA bus speeds inside vs. outside the zone (the same design on a different source), the
   MTA's own taxi speed estimates, MTA counts of vehicles entering the zone, and the per-trip congestion fee recorded
   on every taxi and app ride, which also confirms which taxi zones are inside the toll zone.
@@ -89,8 +90,9 @@ src/congestion/mta.py            data.ny.gov SoQL aggregates: vehicle entries (t
                                  MTA taxi speeds (6p29-6xqn); field names discovered, each dataset optional
    ▼
 src/congestion/analysis.py       zone x month panel (speed of trips from the zone to the same area, weekday toll hours)
-                                 TWFE difference-in-differences (statsmodels, clustered by zone) · event study ·
-                                 pre-trend slope · placebo 2024 · other control · seasonal · weighted · by period/service
+                                 TWFE difference-in-differences (statsmodels, clustered by zone): each year vs. 2024 ·
+                                 placebo 2023 · pre-trend slope · trend-adjusted · event study · other control ·
+                                 weighted · by period/service
    ▼
 dashboard + map (GitHub Pages) · sql.html (DuckDB-WASM) · README results  ← GitHub Actions, weekly
 ```
@@ -105,10 +107,16 @@ dashboard + map (GitHub Pages) · sql.html (DuckDB-WASM) · README results  ← 
 * **Treated and control.** Zones inside the toll zone vs. zones in Manhattan above 60th Street (dense, similar street
   grid, same weather and seasons, no toll). Brooklyn, Queens and the Bronx serve as an alternative control. Airports,
   parks and islands are left out.
-* **Estimate.** `log(speed) = b · inside · after + zone effect + month effect`, standard errors clustered by zone;
-  `exp(b) - 1` is the change attributable to the toll if, without it, inside and control zones would have kept moving
-  in parallel. The event study and the pre-toll trend test check that assumption on 24 months of pre-toll data; a
-  placebo toll in January 2024 must find nothing.
+* **Estimate.** `log(speed) = Σ b_year · inside · year + zone effect + month effect`, with 2024 (the last year before
+  the toll) as the reference and standard errors clustered by zone; `exp(b_2025) - 1` is the first toll year's effect
+  if, without the toll, the gap between inside and control zones would have stayed at its 2024 level. The 2023
+  coefficient is a placebo (no toll yet, so it should be about zero), and the event study and pre-toll trend slope
+  check the same assumption month by month.
+* **When trends are not parallel.** Before the toll, inside-zone speeds were drifting down relative to the control
+  zones, so the year-over-year estimate is a lower bound if that drift would have continued. A second model adds a
+  separate linear time trend for inside zones and measures the toll as a jump away from that trend at January 2025
+  (the trend's slope is estimated from the months before and after the toll together). The two estimates bracket the
+  effect, and the dashboard shows both.
 * **Limits.** Taxis and app rides are a sample of traffic, not all of it. Control zones could be indirectly affected
   (traffic diverting around the zone), which would bias the estimate. January 2025 includes four days before the
   toll. MTA entry counts only exist since the toll started, so they show the trend since, not the initial drop.

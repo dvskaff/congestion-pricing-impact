@@ -27,12 +27,14 @@ def run(tmp_path_factory):
 
 def test_planted_effects_are_recovered(run):
     cfg, s = run
-    main = s["speed_effect"]
-    assert main["lo"] < fixture.PLANTED_SPEED < main["hi"]
-    placebo = next(r for r in s["robustness"] if r["label"].startswith("Placebo"))
-    assert placebo["lo"] < 0 < placebo["hi"]
-    assert s["pickups_effect"]["lo"] < fixture.PLANTED_PICKUPS < s["pickups_effect"]["hi"]
-    assert s["bus_effect"]["lo"] < fixture.PLANTED_BUS < s["bus_effect"]["hi"]
+    sp = s["speed"]
+    for key in ("first", "trend", "pooled"):  # no pre-trend in the fixture: every version finds the planted +8%
+        assert sp[key]["lo"] < fixture.PLANTED_SPEED < sp[key]["hi"], key
+    assert sp["first"]["year"] == 2025 and sp["second"] is None  # the fixture ends in mid-2025
+    assert sp["placebo"]["year"] == 2023 and sp["placebo"]["lo"] < 0 < sp["placebo"]["hi"]
+    assert s["pickups"]["first"]["lo"] < fixture.PLANTED_PICKUPS < s["pickups"]["first"]["hi"]
+    assert s["bus"]["first"]["lo"] < fixture.PLANTED_BUS < s["bus"]["first"]["hi"]
+    assert all(r["label"].endswith("2025 vs. 2024") for r in s["robustness"])
     assert s["pretrend"]["p"] > 0.05
     assert s["entries"]["change"] == pytest.approx(-0.05, abs=0.02)  # the fixture's 2026 entries are 5% lower
     assert s["zones_inside"] == len(fixture.CBD) and s["zone_agreement"] == 1.0
@@ -41,7 +43,8 @@ def test_planted_effects_are_recovered(run):
 def test_incremental_rerun_loads_nothing(run):
     cfg, s = run
     again = pipeline.analyze(cfg, fixture.FixtureSource(cfg))
-    assert again["processed_now"] == [] and again["results"][0]["effect"] == pytest.approx(s["speed_effect"]["effect"])
+    assert again["processed_now"] == []
+    assert again["speed"]["first"]["effect"] == pytest.approx(s["speed"]["first"]["effect"])
 
 
 def test_site_tables_and_readme(run):
@@ -64,4 +67,30 @@ def test_site_tables_and_readme(run):
     shutil.copy(ROOT / "README.md", cfg.readme_path)
     update_readme(cfg.readme_path, s)
     text = cfg.readme_path.read_text()
-    assert "Speed of trips inside the zone" in text and text.count("<!-- RESULTS:START -->") == 1
+    assert "Speed of taxi and app-ride trips inside the zone" in text and "First toll year: 2025 vs. 2024" in text
+    assert text.count("<!-- RESULTS:START -->") == 1
+
+
+def test_trend_adjustment_handles_a_pre_existing_drift():
+    """If the inside zones were already slowing 3% a year before the toll, a plain before/after comparison hides a real
+    effect; the trend-adjusted estimate recovers it and the placebo year flags the problem."""
+    import numpy as np
+    import pandas as pd
+
+    from congestion import analysis as A
+
+    rng = np.random.default_rng(0)
+    months = pd.date_range("2023-01-01", "2026-06-01", freq="MS")
+    rows = []
+    for z in range(40):
+        inside = z < 20
+        for m in months:
+            t = (m - pd.Timestamp("2025-01-01")).days / 365.25
+            log_speed = 2.2 + 0.1 * np.sin(m.month) + (-0.03 * t if inside else 0)
+            log_speed += (0.06 if inside and m >= pd.Timestamp("2025-01-01") else 0) + rng.normal(0, 0.01)
+            rows.append({"zone": z, "month": m, "mph": np.exp(log_speed), "speed_trips": 500, "pickups": 1000,
+                         "region": A.INSIDE if inside else A.UPPER})  # fmt: skip
+    res = A.effects(A.frame(pd.DataFrame(rows)))
+    assert res["trend"]["lo"] < np.exp(0.06) - 1 < res["trend"]["hi"]
+    assert res["placebo"]["effect"] > 0.02  # 2023 sits above 2024: the drift shows up before any toll
+    assert res["first"]["effect"] < res["trend"]["effect"]

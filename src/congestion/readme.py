@@ -8,6 +8,10 @@ from pathlib import Path
 import pandas as pd
 
 
+def _pv(p: float) -> str:
+    return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
+
+
 def _p(v, d=1) -> str:
     return "–" if v is None or pd.isna(v) else f"{v * 100:+.{d}f}%"
 
@@ -17,30 +21,43 @@ def _ci(r: dict) -> str:
 
 
 def results_block(s: dict) -> str:
-    main, rob, trips = s["speed_effect"], s["robustness"], s["pickups_effect"]
+    sp, rob, pk, bus = s["speed"], s["robustness"], s["pickups"], s.get("bus")
     lines = [
         f"_TLC trip records {pd.Timestamp(s['data_from']):%b %Y} to {pd.Timestamp(s['data_through']):%b %Y} · "
         f"{s['rides'] / 1e6:,.0f}M taxi and ride-hail trips · {s['zones_inside']} taxi zones inside the toll zone "
         f"({s['zone_definition']}) · last run {s['built_at']}_",
         "",
-        "| Estimate (difference-in-differences, 95% CI) | Effect of the toll |",
+        "| Speed of taxi and app-ride trips inside the zone, weekday toll hours, vs. Manhattan above 60th St | Effect (95% CI) |",
         "|---|---|",
-        f"| **Speed of trips inside the zone**, weekday toll hours, vs. Manhattan above 60th St | **{_ci(main)}** |",
     ]
+    for key in ("first", "second", "trend", "placebo", "pooled"):
+        r = sp.get(key)
+        if r:
+            bold = "**" if key in ("first", "trend") else ""
+            lines.append(f"| {bold}{r['label']}{bold} | {bold}{_ci(r)}{bold} |")
     for r in rob:
-        lines.append(f"| {r['label']} | {_ci(r)} |")
-    lines.append(f"| Taxi and ride-hail pickups inside the zone | {_ci(trips)} |")
-    if s.get("bus_effect"):
-        lines.append(f"| MTA bus speeds, segments inside vs. outside the zone | {_ci(s['bus_effect'])} |")
+        lines.append(f"| Robustness: {r['label']} | {_ci(r)} |")
+    for key in ("first", "second"):
+        r = pk.get(key)
+        if r:
+            lines.append(f"| Taxi and app-ride {r['label'].lower()} | {_ci(r)} |")
+    if bus:
+        for key in ("first", "trend"):
+            r = bus.get(key)
+            if r:
+                lines.append(
+                    f"| MTA bus speeds inside vs. outside the zone: {r['label'].replace('Buses: ', '')} | {_ci(r)} |"
+                )
     lines.append("")
     pt = s.get("pretrend") or {}
     if pt.get("p") is not None and not pd.isna(pt.get("p")):
-        lines.append(f"**Parallel trends:** before the toll, inside-zone speeds drifted {_p(pt['slope_per_year'], 2)} "
-                     f"a year relative to the control zones (p = {pt['p']:.2f}).")  # fmt: skip
+        lines.append(f"**Before the toll,** inside-zone speeds drifted {_p(pt['slope_per_year'])} a year relative to "
+                     f"the control zones ({_pv(pt['p'])}), so the year-over-year and trend-adjusted estimates bracket "
+                     "the toll's effect; see the dashboard for the month-by-month picture.")  # fmt: skip
         lines.append("")
     rel = s.get("relation_yoy", {})
     if rel:
-        lines.append("**Trips, toll months vs. a year earlier:** "
+        lines.append("**Trips, latest 12 toll months vs. a year earlier:** "
                      + " · ".join(f"{k.lower()} {_p(v)}" for k, v in rel.items()))  # fmt: skip
         lines.append("")
     e = s.get("entries")

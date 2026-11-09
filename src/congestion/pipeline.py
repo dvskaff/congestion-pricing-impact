@@ -63,13 +63,16 @@ def analyze(cfg: Config, src) -> dict:
               "overnight": A.zone_panel(con, cfg, "overnight"), "yellow": A.zone_panel(con, cfg, service="yellow"),
               "fhvhv": A.zone_panel(con, cfg, service="fhvhv")}  # fmt: skip
     panels = {k: v[v["month"].isin(full)] for k, v in panels.items()}
-    results = A.speed_results(panels, full)
+    speed = A.speed_results(panels)
+    results = A.ordered(speed)
     es, pretrend_p = A.event_study(panels["all"])
     es_trips, pretrend_trips = A.event_study(panels["all"], outcome="pickups")
-    trips_did = A.did(panels["all"], outcome="pickups", label="Pickups: inside vs. Manhattan above 60th St")
-    main = results[0]
-    log.info("Speed effect %.1f%% [%.1f%%, %.1f%%]; pre-trend %s", main["effect"] * 100, main["lo"] * 100,
-             main["hi"] * 100, pretrend_p)  # fmt: skip
+    trips = A.effects(A.frame(panels["all"], "pickups"), "Pickups: ")
+    for k in ("first", "trend"):
+        if speed.get(k):
+            log.info("Speed %s: %.1f%% [%.1f%%, %.1f%%]", k, speed[k]["effect"] * 100, speed[k]["lo"] * 100,
+                     speed[k]["hi"] * 100)  # fmt: skip
+    log.info("Pre-toll trend: %s", pretrend_p)
 
     crz = A.crz_summary(m["crz"]) if "crz" in m else None
     bus = A.bus_did(m["bus"]) if "bus" in m else None
@@ -88,11 +91,7 @@ def analyze(cfg: Config, src) -> dict:
     zone_month = zone_month[pd.to_datetime(zone_month["month"]).isin(full)]
     est = [{"specification": r["label"], "effect": r["effect"], "lo": r["lo"], "hi": r["hi"], "p_value": r["p"],
             "zones_inside": r["zones_inside"], "zones_control": r["zones_control"], "observations": r["obs"]}
-           for r in [*results, trips_did] if r.get("ok")]  # fmt: skip
-    if bus:
-        est.append({"specification": "Bus speeds: segments inside vs. outside the zone", "effect": bus["effect"],
-                    "lo": bus["lo"], "hi": bus["hi"], "p_value": bus["p"], "zones_inside": None,
-                    "zones_control": None, "observations": bus["units"]})  # fmt: skip
+           for r in [*results, *A.ordered(trips), *(A.ordered(bus) if bus else [])]]  # fmt: skip
     load_log = tlc.load_log(cfg)
     con.close()
     return {
@@ -100,7 +99,7 @@ def analyze(cfg: Config, src) -> dict:
         "zones": zt, "geo": geo, "cbd_info": cbd_info, "fee_by_zone": fee_by_zone, "relations": rel,
         "within_peak": within, "speeds": speeds, "panels": panels, "results": results, "event_study": es,
         "pretrend_p": pretrend_p, "event_study_trips": es_trips, "pretrend_trips_p": pretrend_trips,
-        "trips_did": trips_did, "crz": crz, "bus": bus, "zone_change": zone_change, "raw_speed_yoy": raw,
+        "speed": speed, "trips": trips, "crz": crz, "bus": bus, "zone_change": zone_change, "raw_speed_yoy": raw,
         "relation_yoy": rel_yoy, "fee_check": A.fee_check(rel), "taxi_official": taxi_official,
         "mta_notes": m["notes"], "seconds": round(time.time() - t0), "policy_month": POLICY_MONTH,
         "zone_month": zone_month, "estimates": pd.DataFrame(est), "bus_raw": m.get("bus"),
@@ -141,7 +140,7 @@ def main() -> None:
         json.dumps(
             {
                 "data_through": s["data_through"],
-                "speed_effect": s["speed_effect"]["effect"],
+                "speed_first_year": (s["speed"]["first"] or {}).get("effect"),
                 "zones_inside": s["zones_inside"],
             },
             default=str,
