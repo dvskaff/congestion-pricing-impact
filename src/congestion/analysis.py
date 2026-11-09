@@ -209,16 +209,22 @@ def pre_trend(d: pd.DataFrame) -> dict:
 
 def effects(d: pd.DataFrame, what: str = "") -> dict:
     """The estimates reported for one outcome: each year vs. 2024, trend-adjusted, and pooled."""
+
+    def lab(
+        text: str,
+    ) -> str:  # "Pickups: " + "First toll year: 2025 vs. 2024" -> "Pickups: first toll year, 2025 vs. 2024"
+        return f"{what}{text[0].lower()}{text[1:].replace(': ', ', ', 1)}" if what else text
+
     yr = yearly(d)
     first = int(pd.Timestamp(POLICY_MONTH).year)
     out = {"yearly": yr,
-           "trend": trend_adjusted(d, f"{what}Trend-adjusted: if the pre-toll drift had continued"),
-           "pooled": pooled(d, f"{what}Pooled: all toll months vs. all earlier months (assumes parallel trends)")}  # fmt: skip
+           "trend": trend_adjusted(d, lab("Trend-adjusted: if the pre-toll drift had continued")),
+           "pooled": pooled(d, lab("Pooled: all toll months vs. all earlier months (assumes parallel trends)"))}  # fmt: skip
     for key, y, text in (("first", first, "First toll year"), ("second", first + 1, "Second toll year"),
                          ("placebo", BASE_YEAR - 1, "Placebo, before any toll")):  # fmt: skip
         if y in yr:
             suffix = " (should be about zero)" if key == "placebo" else ""
-            out[key] = {**yr[y], "label": f"{what}{text}: {y} vs. {BASE_YEAR}{suffix}"}
+            out[key] = {**yr[y], "label": lab(f"{text}: {y} vs. {BASE_YEAR}{suffix}")}
     return out
 
 

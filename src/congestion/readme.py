@@ -27,7 +27,9 @@ def results_block(s: dict) -> str:
         f"{s['rides'] / 1e6:,.0f}M taxi and ride-hail trips · {s['zones_inside']} taxi zones inside the toll zone "
         f"({s['zone_definition']}) · last run {s['built_at']}_",
         "",
-        "| Speed of taxi and app-ride trips inside the zone, weekday toll hours, vs. Manhattan above 60th St | Effect (95% CI) |",
+        "**Speed of taxi and app-ride trips inside the zone**, weekday toll hours, vs. Manhattan above 60th St:",
+        "",
+        "| Estimate | Effect (95% CI) |",
         "|---|---|",
     ]
     for key in ("first", "second", "trend", "placebo", "pooled"):
@@ -35,25 +37,27 @@ def results_block(s: dict) -> str:
         if r:
             bold = "**" if key in ("first", "trend") else ""
             lines.append(f"| {bold}{r['label']}{bold} | {bold}{_ci(r)}{bold} |")
-    for r in rob:
-        lines.append(f"| Robustness: {r['label']} | {_ci(r)} |")
-    for key in ("first", "second"):
-        r = pk.get(key)
-        if r:
-            lines.append(f"| Taxi and app-ride {r['label'].lower()} | {_ci(r)} |")
-    if bus:
-        for key in ("first", "trend"):
-            r = bus.get(key)
-            if r:
-                lines.append(
-                    f"| MTA bus speeds inside vs. outside the zone: {r['label'].replace('Buses: ', '')} | {_ci(r)} |"
-                )
+    if rob:
+        first = sp.get("first", {}).get("label", "").split(": ")[-1]
+        lines += ["", f"**Robustness checks**, speed inside the zone, {first}:", "", "| Specification | Effect (95% CI) |",
+                  "|---|---|"]  # fmt: skip
+        lines += [f"| {r['label'].rsplit(', ', 1)[0]} | {_ci(r)} |" for r in rob]
+    other = [("Taxi and app-ride pickups inside the zone", pk.get(k)) for k in ("first", "second")]
+    other += [
+        ("MTA bus speeds, route segments inside vs. outside the zone", (bus or {}).get(k)) for k in ("first", "trend")
+    ]
+    other = [(name, r) for name, r in other if r]
+    if other:
+        lines += ["", "**Other outcomes**, same design:", "", "| Outcome | Effect (95% CI) |", "|---|---|"]
+        lines += [f"| {name}: {r['label'].split(': ', 1)[1]} | {_ci(r)} |" for name, r in other]
     lines.append("")
     pt = s.get("pretrend") or {}
     if pt.get("p") is not None and not pd.isna(pt.get("p")):
+        drift = pt["p"] < 0.05
+        tail = ("so the year-over-year and trend-adjusted estimates bracket the toll's effect"
+                if drift else "consistent with the two areas moving in parallel")  # fmt: skip
         lines.append(f"**Before the toll,** inside-zone speeds drifted {_p(pt['slope_per_year'])} a year relative to "
-                     f"the control zones ({_pv(pt['p'])}), so the year-over-year and trend-adjusted estimates bracket "
-                     "the toll's effect; see the dashboard for the month-by-month picture.")  # fmt: skip
+                     f"the control zones ({_pv(pt['p'])}), {tail}; see the dashboard for the month-by-month picture.")  # fmt: skip
         lines.append("")
     rel = s.get("relation_yoy", {})
     if rel:
