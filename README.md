@@ -28,7 +28,7 @@ taken out?** This project answers that with public data only:
 Rewritten automatically after every run.
 
 <!-- RESULTS:START -->
-_TLC trip records Jan 2023 to Sep 2026 · 1,028M taxi and ride-hail trips · 38 taxi zones inside the toll zone (per-trip congestion fees in the trip records) · last run 2026-11-09 23:33 UTC_
+_TLC trip records Jan 2023 to Sep 2026 · 1,028M taxi and ride-hail trips · 38 taxi zones inside the toll zone (per-trip congestion fees in the trip records) · last run 2026-11-16 23:29 UTC_
 
 **Speed of taxi and app-ride trips inside the zone**, weekday toll hours, vs. Manhattan above 60th St:
 
@@ -58,13 +58,13 @@ _TLC trip records Jan 2023 to Sep 2026 · 1,028M taxi and ride-hail trips · 38 
 | Taxi and app-ride pickups inside the zone: first toll year, 2025 vs. 2024 | -1.9% (-3.0% to -0.7%) |
 | Taxi and app-ride pickups inside the zone: second toll year, 2026 vs. 2024 | -7.0% (-9.5% to -4.5%) |
 | MTA bus speeds, route segments inside vs. outside the zone: first toll year, 2025 vs. 2024 | +2.9% (+2.2% to +3.6%) |
-| MTA bus speeds, route segments inside vs. outside the zone: trend-adjusted, if the pre-toll drift had continued | +5.9% (+5.2% to +6.7%) |
+| MTA bus speeds, route segments inside vs. outside the zone: trend-adjusted, if the pre-toll drift had continued | +6.1% (+5.3% to +6.8%) |
 
 **Before the toll,** inside-zone speeds drifted -4.4% a year relative to the control zones (p < 0.001), so the year-over-year and trend-adjusted estimates bracket the toll's effect; see the dashboard for the month-by-month picture.
 
 **Trips, latest 12 toll months vs. a year earlier:** within the zone -3.0% · into the zone -0.9% · out of the zone -0.3% · outside the zone +8.2%
 
-**Vehicles entering the zone (MTA):** 482,249 per weekday in 2026, -4.0% vs. the same days of 2025 (Jan 5 to Oct 31).
+**Vehicles entering the zone (MTA):** 482,547 per weekday in 2026, -4.0% vs. the same days of 2025 (Jan 5 to Nov 07).
 <!-- RESULTS:END -->
 
 ## Explore it yourself
